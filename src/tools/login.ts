@@ -7,12 +7,19 @@ import {
   loadCredentials,
   isCredentialsValid,
   getCredentialsPath,
+  isSiteCookie,
 } from '../utils/credentials.js';
 import type { Credentials, CookieData } from '../types/pingcode.js';
 
 const PINGCODE_DOMAIN = process.env.PINGCODE_DOMAIN || 'neuralgalaxy.pingcode.com';
-const LOGIN_URL = `https://${PINGCODE_DOMAIN}/signin`;
-const SUCCESS_URL_PATTERN = /pingcode\.com\/(pjm|agile|wiki|testhub|workspace)/;
+const LOGIN_URL = `http://${PINGCODE_DOMAIN}/signin`;
+
+// 域名可能带正则元字符，转义后再拼进正则
+const ESCAPED_DOMAIN = PINGCODE_DOMAIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// 登录成功判定：落在当前域名下的业务页面（排除登录/授权页）
+const SUCCESS_URL_PATTERN = new RegExp(
+  `^https?://${ESCAPED_DOMAIN}/(?!signin|login|auth|oauth|sso)`
+);
 
 // 登录超时时间（5分钟）
 const LOGIN_TIMEOUT = 5 * 60 * 1000;
@@ -61,7 +68,7 @@ export async function login(): Promise<{ success: boolean; message: string }> {
       if (!SUCCESS_URL_PATTERN.test(currentUrl)) {
         return {
           success: false,
-          message: '登录超时或被取消',
+          message: `登录超时或被取消（当前页面: ${currentUrl}）`,
         };
       }
     }
@@ -107,7 +114,7 @@ export async function login(): Promise<{ success: boolean; message: string }> {
     // 获取所有 cookies
     const cookies = await context.cookies();
     const pingcodeCookies: CookieData[] = cookies
-      .filter((c) => c.domain.includes('pingcode.com'))
+      .filter((c) => isSiteCookie(c.domain, PINGCODE_DOMAIN))
       .map((c) => ({
         name: c.name,
         value: c.value,

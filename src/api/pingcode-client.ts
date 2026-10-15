@@ -13,7 +13,7 @@ export class PingCodeClient {
   private baseUrl: string;
 
   constructor(domain: string = DEFAULT_DOMAIN) {
-    this.baseUrl = `https://${domain}`;
+    this.baseUrl = `http://${domain}`;
     this.client = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000,

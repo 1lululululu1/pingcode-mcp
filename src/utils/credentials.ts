@@ -7,6 +7,28 @@ const CREDENTIALS_DIR = path.join(os.homedir(), '.pingcode-mcp');
 const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, 'credentials.json');
 
 /**
+ * 判断 cookie 域名是否属于指定站点
+ * 兼容 pingcode.cairenhui.com 这类自定义域名：cookie 可能挂在 .cairenhui.com 上
+ * @param cookieDomain cookie 的 domain 字段
+ * @param siteDomain PingCode 站点域名，如 pingcode.cairenhui.com
+ */
+export function isSiteCookie(cookieDomain: string, siteDomain: string): boolean {
+  const cookieHost = cookieDomain.replace(/^\./, '').toLowerCase();
+  const siteHost = siteDomain.replace(/^\./, '').toLowerCase();
+  if (!cookieHost || !siteHost) return false;
+
+  // 取后两段作为主域名，如 pingcode.cairenhui.com -> cairenhui.com
+  const rootHost = siteHost.split('.').slice(-2).join('.');
+
+  return (
+    cookieHost === siteHost ||
+    cookieHost.endsWith(`.${siteHost}`) ||
+    cookieHost === rootHost ||
+    cookieHost.endsWith(`.${rootHost}`)
+  );
+}
+
+/**
  * 确保凭证目录存在
  */
 function ensureCredentialsDir(): void {
@@ -59,19 +81,20 @@ export function clearCredentials(): void {
 export function isCredentialsValid(credentials: Credentials | null): boolean {
   if (!credentials) return false;
   if (!credentials.cookies || credentials.cookies.length === 0) return false;
-  
-  // 检查是否有关键 cookie
-  const hasPingCodeCookie = credentials.cookies.some(
-    (c) => c.name.includes('pingcode') || c.name.includes('session') || c.name.includes('token')
-  );
-  
-  if (!hasPingCodeCookie) return false;
-  
+
+  // 按域名判断 cookie 是否属于本站点
+  // 注意：PingCode 自建域名的会话 cookie 名为 s-<teamId>，靠名字猜（session/token）会误判
+  const siteDomain =
+    credentials.domain || process.env.PINGCODE_DOMAIN || 'neuralgalaxy.pingcode.com';
+  const hasSiteCookie = credentials.cookies.some((c) => isSiteCookie(c.domain, siteDomain));
+
+  if (!hasSiteCookie) return false;
+
   // 检查过期时间（如果有设置）
   if (credentials.expires_at && Date.now() > credentials.expires_at) {
     return false;
   }
-  
+
   return true;
 }
 
