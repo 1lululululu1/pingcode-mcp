@@ -114,9 +114,13 @@ npx pingcode-mcp
 | `list_releases`          | 列出项目的发布版本         | `project_id`: 项目标识（如 LFY）                                             |
 | `get_release_items`      | 获取版本关联的工作项       | `release_id`: 版本ID<br>`project_id`: 项目标识<br>`item_type`: bug/story/all |
 | `search_work_items`      | 搜索工作项                 | `query`: 搜索关键词<br>`project_id`: 项目标识（可选）                        |
+| `get_selectable_states`  | 查询工作项可流转的状态     | `work_item_id`: 工作项编号                                                   |
 | `update_work_item_state` | 更新工作项状态             | `work_item_id`: 工作项编号<br>`state_name`: 目标状态                         |
 | `get_bug_field_options`  | 获取缺陷字段可选值         | `work_item_id`: 缺陷工作项编号                                               |
 | `update_bug_fields`      | 更新缺陷的分析和解决方案   | `work_item_id`: 工作项编号<br>`reason`: 原因分析（可选）<br>`solution`: 解决方案（可选）<br>`jiejuefangfa`: 解决方法（可选） |
+| `update_work_item_properties` | 批量更新工作项基本信息字段 | `work_item_id`: 工作项编号<br>`properties`: `[{key, value}]` 字段列表 |
+| `get_work_item_properties` | 查询工作项基本信息字段值 | `work_item_id`: 工作项编号 |
+| `update_work_item_assignee` | 变更工作项负责人 | `work_item_id`: 工作项编号<br>`assignee`: 成员姓名或 uid |
 
 ## 💡 使用示例
 

@@ -7,7 +7,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { login, logout, checkAuth } from './tools/login.js';
-import { getWorkItem, getReleaseItems, searchWorkItems, listReleases, listProjects, updateWorkItemState, getBugFieldOptions, updateBugFields } from './tools/work-items.js';
+import { getWorkItem, getReleaseItems, searchWorkItems, listReleases, listProjects, getSelectableStates, updateWorkItemState, getBugFieldOptions, updateBugFields, getWorkItemProperties, updateWorkItemProperties, updateWorkItemAssignee } from './tools/work-items.js';
 
 // 创建 MCP 服务器
 const server = new Server(
@@ -136,8 +136,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'get_selectable_states',
+        description:
+          '查询工作项当前可流转的状态列表。PingCode 工作流不允许跨状态跳转，改状态前先用本工具确认目标状态是否可达。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            work_item_id: {
+              type: 'string',
+              description: '工作项编号，如 YGD-8625',
+            },
+          },
+          required: ['work_item_id'],
+        },
+      },
+      {
         name: 'update_work_item_state',
-        description: '更新工作项（缺陷/需求/任务）的状态。通过状态名称指定目标状态。',
+        description: '更新工作项（缺陷/需求/任务）的状态。通过状态名称指定目标状态。建议先用 get_selectable_states 确认目标状态可达。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -191,6 +206,77 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ['work_item_id'],
+        },
+      },
+      {
+        name: 'update_work_item_assignee',
+        description:
+          '变更工作项的负责人。assignee 可传成员姓名（工具会从项目成员列表反查 uid）或成员 uid。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            work_item_id: {
+              type: 'string',
+              description: '工作项编号，如 YGD-8625',
+            },
+            assignee: {
+              type: 'string',
+              description: '目标负责人姓名，如 "张三"；也可直接传成员 uid',
+            },
+          },
+          required: ['work_item_id', 'assignee'],
+        },
+      },
+      {
+        name: 'get_work_item_properties',
+        description:
+          '查询工作项当前的基本信息字段值（任务提交说明、自测说明、影响范围等）。' +
+          '更新前可作为原值对比，更新后可用来核对结果。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            work_item_id: {
+              type: 'string',
+              description: '工作项编号，如 YGD-8625',
+            },
+          },
+          required: ['work_item_id'],
+        },
+      },
+      {
+        name: 'update_work_item_properties',
+        description:
+          '批量更新工作项的基本信息字段（富文本）。常用 key：renwutijiaoshuoming 任务提交说明、' +
+          'ziceshuoming 自测说明、renwuxiugaishuoming 任务修改说明、yingxiangfanwei 影响范围、' +
+          'tijiaoceshishuoming 提交测试说明、shujukujiaobenbiangeng 数据库脚本变更、' +
+          'jishuxiugaifangan 技术修改方案。value 传 HTML 字符串。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            work_item_id: {
+              type: 'string',
+              description: '工作项编号，如 YGD-8625',
+            },
+            properties: {
+              type: 'array',
+              description: '待更新的字段列表，可一次提交多个',
+              items: {
+                type: 'object',
+                properties: {
+                  key: {
+                    type: 'string',
+                    description: '属性名，如 renwutijiaoshuoming',
+                  },
+                  value: {
+                    type: 'string',
+                    description: '属性值，富文本字段传 HTML 字符串',
+                  },
+                },
+                required: ['key', 'value'],
+              },
+            },
+          },
+          required: ['work_item_id', 'properties'],
         },
       },
     ],
@@ -335,6 +421,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'get_selectable_states': {
+        const { work_item_id } = args as { work_item_id: string };
+        const result = await getSelectableStates(work_item_id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
       case 'update_work_item_state': {
         const { work_item_id, state_name } = args as {
           work_item_id: string;
@@ -374,6 +474,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           jiejuefangfa?: string;
         };
         const result = await updateBugFields(work_item_id, reason, solution, jiejuefangfa);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'update_work_item_properties': {
+        const { work_item_id, properties } = args as {
+          work_item_id: string;
+          properties: Array<{ key: string; value: string }>;
+        };
+        const result = await updateWorkItemProperties(work_item_id, properties);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'get_work_item_properties': {
+        const { work_item_id } = args as { work_item_id: string };
+        const result = await getWorkItemProperties(work_item_id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'update_work_item_assignee': {
+        const { work_item_id, assignee } = args as {
+          work_item_id: string;
+          assignee: string;
+        };
+        const result = await updateWorkItemAssignee(work_item_id, assignee);
         return {
           content: [
             {

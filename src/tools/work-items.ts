@@ -725,6 +725,65 @@ export async function listProjects(): Promise<{
 }
 
 /**
+ * 查询工作项当前可流转的状态列表
+ *
+ * PingCode 工作流不允许跨状态跳转，改状态前先用本工具确认目标状态是否可达。
+ * @param workItemId 工作项编号（如 YGD-8625）
+ */
+export async function getSelectableStates(
+  workItemId: string
+): Promise<{
+  success: boolean;
+  data?: string;
+  states?: Array<{ id: string; name: string }>;
+  error?: string;
+}> {
+  try {
+    const workItem = await pingcodeClient.getWorkItem(workItemId);
+    if (!workItem) {
+      return {
+        success: false,
+        error: `未找到工作项: ${workItemId}`,
+      };
+    }
+
+    const states = await pingcodeClient.getSelectableStates(workItemId);
+    if (states.length === 0) {
+      return {
+        success: false,
+        error: `工作项 ${workItemId} 当前没有可流转的状态`,
+      };
+    }
+
+    const item: any = workItem;
+    const lines: string[] = [
+      `# ${item.whole_identifier || workItemId} 可流转状态`,
+      '',
+      // 工作项接口只返回 state_id，精确状态名需从状态列表中反查
+      `当前状态: ${STATE_TYPE_MAP[item.state_type] || '未知'} (state_id: ${item.state_id})`,
+      '',
+      '## 可流转到的状态',
+      '',
+    ];
+
+    states.forEach((s: any, index: number) => {
+      lines.push(`${index + 1}. **${s.name}** (state_id: ${s._id})`);
+    });
+
+    return {
+      success: true,
+      data: lines.join('\n'),
+      states: states.map((s: any) => ({ id: s._id, name: s.name })),
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+/**
  * 更新工作项状态
  * @param workItemId 工作项编号（如 LFY-2527）
  * @param stateName 目标状态名称（如 "已完成"、"进行中"）
@@ -897,6 +956,191 @@ export async function updateBugFields(
     return {
       success: true,
       data: `✅ 工作项 ${workItemId} 已更新：\n${updates.map((u) => `  - ${u}`).join('\n')}`,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * 批量更新工作项的基本信息字段
+ *
+ * 走 /property 端点，一次可提交多个字段，key 为 PingCode 属性名。
+ * @param workItemId 工作项编号（如 YGD-8625）
+ * @param properties 待更新的字段列表，富文本字段的 value 传 HTML 字符串
+ */
+export async function updateWorkItemProperties(
+  workItemId: string,
+  properties: Array<{ key: string; value: string }>
+): Promise<{
+  success: boolean;
+  data?: string;
+  error?: string;
+}> {
+  try {
+    if (!properties || properties.length === 0) {
+      return {
+        success: false,
+        error: '请至少提供一个要更新的字段（key + value）',
+      };
+    }
+
+    await pingcodeClient.updateWorkItemProperties(workItemId, properties);
+
+    const lines = properties.map((p) => {
+      const preview = p.value.length > 80 ? `${p.value.substring(0, 80)}...` : p.value;
+      return `  - ${p.key}: ${preview}`;
+    });
+
+    return {
+      success: true,
+      data: `✅ 工作项 ${workItemId} 已更新 ${properties.length} 个字段：\n${lines.join('\n')}`,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+// PingCode 属性 key 的中文名映射（仅覆盖常用字段，未知 key 回退为 key 本身）
+const PROPERTY_LABELS: Record<string, string> = {
+  renwutijiaoshuoming: '任务提交说明',
+  renwuxiugaishuoming: '任务修改说明',
+  ziceshuoming: '自测说明',
+  yingxiangfanwei: '影响范围',
+  tijiaoceshishuoming: '提交测试说明',
+  shujukujiaobenbiangeng: '数据库脚本变更',
+  jishuxiugaifangan: '技术修改方案',
+  xiugaiyaoqiuwanchengshijian: '修改要求完成时间',
+  xiugaishijiwanchengshijian: '修改实际完成时间',
+  ceshiyaoqiuwanchengshijian: '测试要求完成时间',
+  ceshitongguoshijian: '测试通过时间',
+  shenhetongguotijiaojichengshijian: '审核通过提交集成时间',
+  shenheyijian: '审核意见',
+  ceshiyijian: '测试意见',
+  tebieshuoming: '特别说明',
+  liuchengwenjianbiangeng: '流程文件变更',
+  reason: '原因分析',
+  solution: '解决方案',
+  jiejuefangfa: '解决方法',
+};
+
+// 字段值可能是字符串、日期对象、选项数组或引用数组，逐一拍平成单行文本
+function formatFieldValue(value: any): string {
+  if (value === null || value === undefined) return '';
+
+  // 日期/时间对象：附上可读时间，否则只看到 {"date":...,"with_time":0}
+  if (typeof value === 'object' && !Array.isArray(value) && 'date' in value) {
+    return value.date ? formatTimestamp(value.date) : '未设置';
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((field: any) => {
+        if (!field || typeof field !== 'object') return String(field);
+        const label = field.key ? PROPERTY_LABELS[field.key] || field.key : '未命名字段';
+        const fieldValue = field.value ?? field.options ?? field.text ?? field;
+        const text =
+          typeof fieldValue === 'object' && fieldValue !== null
+            ? JSON.stringify(fieldValue)
+            : String(fieldValue);
+        return `  - ${label}${field.key ? ` (${field.key})` : ''}: ${text}`;
+      })
+      .join('\n');
+  }
+
+  if (typeof value === 'object') return JSON.stringify(value);
+
+  return String(value);
+}
+
+/**
+ * 查询工作项当前的基本信息字段值
+ *
+ * 更新前用原值做对比，更新后用来核对结果。
+ * @param workItemId 工作项编号（如 YGD-8625）
+ */
+export async function getWorkItemProperties(
+  workItemId: string
+): Promise<{
+  success: boolean;
+  data?: string;
+  properties?: Array<{ key: string; value: any }>;
+  error?: string;
+}> {
+  try {
+    const item: any = await pingcodeClient.getWorkItem(workItemId);
+    if (!item) {
+      return {
+        success: false,
+        error: `未找到工作项: ${workItemId}`,
+      };
+    }
+
+    const properties = item.properties || {};
+    const keys = Object.keys(properties);
+    if (keys.length === 0) {
+      return {
+        success: false,
+        error: `工作项 ${workItemId} 没有可读取的属性字段`,
+      };
+    }
+
+    const lines: string[] = [
+      `# ${item.whole_identifier || workItemId} 基本信息字段`,
+      '',
+    ];
+
+    for (const key of keys) {
+      const value = properties[key];
+      if (value === null || value === undefined || value === '') continue;
+      lines.push(`- **${PROPERTY_LABELS[key] || key}** (${key}): ${formatFieldValue(value)}`);
+    }
+
+    return {
+      success: true,
+      data: lines.join('\n'),
+      properties: keys.map((key) => ({ key, value: properties[key] })),
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * 变更工作项的负责人
+ * @param workItemId 工作项编号（如 YGD-8625）
+ * @param assignee 成员姓名（如 "张三"）或成员 uid
+ */
+export async function updateWorkItemAssignee(
+  workItemId: string,
+  assignee: string
+): Promise<{
+  success: boolean;
+  data?: string;
+  error?: string;
+}> {
+  try {
+    if (!assignee || !assignee.trim()) {
+      return {
+        success: false,
+        error: '请提供负责人姓名或 uid',
+      };
+    }
+
+    await pingcodeClient.updateWorkItemAssignee(workItemId, assignee);
+
+    return {
+      success: true,
+      data: `✅ 工作项 ${workItemId} 的负责人已变更为 "${assignee.trim()}"`,
     };
   } catch (error: any) {
     return {

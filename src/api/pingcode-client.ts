@@ -325,6 +325,62 @@ export class PingCodeClient {
   }
 
   /**
+   * 更新工作项的负责人
+   *
+   * 负责人接口只认内部 _id 和成员 uid，编号（如 YGD-8625）和成员姓名需先解析。
+   * @param workItemId 工作项编号（如 YGD-8625）
+   * @param assignee 成员姓名（如 "张三"）或成员 uid
+   */
+  async updateWorkItemAssignee(workItemId: string, assignee: string): Promise<boolean> {
+    const headers = this.getAuthHeaders();
+
+    try {
+      // 1. 先获取工作项以拿到内部 _id
+      const workItem = await this.getWorkItem(workItemId);
+      if (!workItem) {
+        throw new Error(`未找到工作项: ${workItemId}`);
+      }
+      const internalId = (workItem as any)._id;
+
+      // 2. 解析成员 uid：传姓名时从项目成员列表反查
+      const projectIdentifier = workItemId.includes('-')
+        ? workItemId.replace(/^#/, '').trim().split('-')[0]
+        : null;
+      let assigneeId = assignee.trim();
+
+      if (projectIdentifier) {
+        const members = await this.getProjectMembers(projectIdentifier);
+        if (members.has(assigneeId)) {
+          // 已经是 uid，直接用
+        } else {
+          const matched = [...members.entries()].find(([, name]) => name === assigneeId);
+          if (matched) {
+            assigneeId = matched[0];
+          } else {
+            const available = [...members.values()].join('、');
+            throw new Error(
+              `未在项目 ${projectIdentifier} 中找到成员 "${assignee}"。可用成员: ${available}`
+            );
+          }
+        }
+      }
+
+      // 3. 使用内部 _id 调用负责人 API
+      await this.client.put(
+        `/api/agile/work-items/${internalId}/assignee`,
+        { assignee: assigneeId },
+        { headers }
+      );
+      return true;
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      throw error;
+    }
+  }
+
+  /**
    * 获取工作项详情（增强版，包含成员名称）
    */
   async getWorkItemWithDetails(identifier: string): Promise<any | null> {
@@ -442,19 +498,29 @@ export class PingCodeClient {
 
   /**
    * 更新工作项状态
-   * @param workItemId 工作项 ID（如 LFY-2527）
+   *
+   * PingCode 的状态流转接口只认内部 _id，编号（如 YGD-8625）需先解析。
+   * @param workItemId 工作项编号（如 YGD-8625）或内部 _id
    * @param stateId 目标状态 ID
    */
   async updateWorkItemState(workItemId: string, stateId: string): Promise<any> {
     const headers = this.getAuthHeaders();
 
-    // 清理编号格式
-    const cleanId = workItemId.replace(/^#/, '').trim();
+    // 状态流转接口要求传内部 _id，先用编号换取
+    const workItem = await this.getWorkItem(workItemId);
+    if (!workItem) {
+      throw new Error(`未找到工作项: ${workItemId}`);
+    }
 
     try {
-      const response = await this.client.put(
-        `/api/agile/work-items/${cleanId}`,
-        { state: stateId },
+      const response = await this.client.post(
+        '/api/agile/work-items/state',
+        {
+          state_id: stateId,
+          work_item_ids: [workItem._id],
+          // 0 = 走正常流转校验，不绕过必填字段
+          bypass: 0,
+        },
         { headers }
       );
       return response.data?.data?.value || response.data?.value || response.data;
@@ -530,12 +596,16 @@ export class PingCodeClient {
   }
 
   /**
-   * 更新缺陷工作项的属性
-   * @param workItemId 工作项编号（如 LFY-2559）
-   * @param key 属性名（如 reason, solution, jiejuefangfa）
-   * @param value 属性值（枚举字段使用选项 ID，文本字段使用文本内容）
+   * 批量更新工作项的属性字段
+   *
+   * 属性接口只认内部 _id，编号（如 YGD-8625）需先解析。
+   * @param workItemId 工作项编号（如 YGD-8625）
+   * @param properties 待更新的字段列表，富文本字段的 value 传 HTML 字符串
    */
-  async updateBugProperty(workItemId: string, key: string, value: string): Promise<boolean> {
+  async updateWorkItemProperties(
+    workItemId: string,
+    properties: Array<{ key: string; value: string }>
+  ): Promise<boolean> {
     const headers = this.getAuthHeaders();
 
     try {
@@ -546,10 +616,10 @@ export class PingCodeClient {
       }
       const internalId = (workItem as any)._id;
 
-      // 2. 使用内部 _id 调用 /property API
+      // 2. 使用内部 _id 调用属性 API
       await this.client.put(
         `/api/agile/work-items/${internalId}/property`,
-        { key, value, is_pure_update: 0 },
+        { property_values: properties },
         { headers }
       );
       return true;
@@ -567,7 +637,7 @@ export class PingCodeClient {
    * @param reasonId 原因分析选项 ID（可通过 getReasonOptions 获取）
    */
   async updateReason(workItemId: string, reasonId: string): Promise<boolean> {
-    return this.updateBugProperty(workItemId, 'reason', reasonId);
+    return this.updateWorkItemProperties(workItemId, [{ key: 'reason', value: reasonId }]);
   }
 
   /**
@@ -576,7 +646,7 @@ export class PingCodeClient {
    * @param solutionId 解决方案选项 ID（可通过 getSolutionOptions 获取）
    */
   async updateSolution(workItemId: string, solutionId: string): Promise<boolean> {
-    return this.updateBugProperty(workItemId, 'solution', solutionId);
+    return this.updateWorkItemProperties(workItemId, [{ key: 'solution', value: solutionId }]);
   }
 
   /**
@@ -585,7 +655,7 @@ export class PingCodeClient {
    * @param text 解决方法的文本内容
    */
   async updateJiejuefangfa(workItemId: string, text: string): Promise<boolean> {
-    return this.updateBugProperty(workItemId, 'jiejuefangfa', text);
+    return this.updateWorkItemProperties(workItemId, [{ key: 'jiejuefangfa', value: text }]);
   }
 }
 
