@@ -968,7 +968,7 @@ export async function updateBugFields(
 /**
  * 批量更新工作项的基本信息字段
  *
- * 走 /property 端点，一次可提交多个字段，key 为 PingCode 属性名。
+ * 走 /batch/properties 端点，一次可提交多个字段，key 为 PingCode 属性名。
  * @param workItemId 工作项编号（如 YGD-8625）
  * @param properties 待更新的字段列表，富文本字段的 value 传 HTML 字符串
  */

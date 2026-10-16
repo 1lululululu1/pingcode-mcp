@@ -598,7 +598,8 @@ export class PingCodeClient {
   /**
    * 批量更新工作项的属性字段
    *
-   * 属性接口只认内部 _id，编号（如 YGD-8625）需先解析。
+   * 批量属性接口只认内部 _id，编号（如 YGD-8625）需先解析。
+   * 注意路径是 /batch/properties，不是 /property。
    * @param workItemId 工作项编号（如 YGD-8625）
    * @param properties 待更新的字段列表，富文本字段的 value 传 HTML 字符串
    */
@@ -618,7 +619,7 @@ export class PingCodeClient {
 
       // 2. 使用内部 _id 调用属性 API
       await this.client.put(
-        `/api/agile/work-items/${internalId}/property`,
+        `/api/agile/work-items/${internalId}/batch/properties`,
         { property_values: properties },
         { headers }
       );
