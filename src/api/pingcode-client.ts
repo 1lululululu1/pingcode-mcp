@@ -8,6 +8,46 @@ import type { WorkItem, Release, ApiResponse } from '../types/pingcode.js';
 
 const DEFAULT_DOMAIN = process.env.PINGCODE_DOMAIN || 'neuralgalaxy.pingcode.com';
 
+/** 缺陷选项字段的定义：key 因租户而异，靠中文名兜底匹配 */
+export interface BugFieldDefinition {
+  /** 字段真实 key，写入时用它 */
+  key: string;
+  /** 字段中文名 */
+  name: string;
+  /** 当前可选值 */
+  options: Array<{ id: string; text: string }>;
+}
+
+/**
+ * 缺陷字段的匹配规则
+ *
+ * 字段 key 各租户不一致：默认租户是 reason / solution，
+ * 而 cairenhui 租户的「缺陷原因」key 是一串内部编码。
+ * 所以先按 key 匹配，匹配不到再按中文名兜底。
+ */
+const BUG_FIELD_MATCHERS: Record<'reason' | 'solution', { keys: string[]; names: string[] }> = {
+  reason: { keys: ['reason'], names: ['原因分析', '缺陷原因'] },
+  solution: { keys: ['solution'], names: ['解决方案'] },
+};
+
+/** 按 key 或中文名在字段定义里找目标字段，找不到返回 null */
+function findBugField(
+  properties: any[],
+  matcher: { keys: string[]; names: string[] }
+): BugFieldDefinition | null {
+  const prop =
+    properties.find((p) => matcher.keys.includes(p.key)) ||
+    properties.find((p) => matcher.names.includes(p.name));
+
+  if (!prop || !Array.isArray(prop.options)) return null;
+
+  return {
+    key: prop.key,
+    name: prop.name,
+    options: prop.options.map((opt: any) => ({ id: opt._id, text: opt.text })),
+  };
+}
+
 export class PingCodeClient {
   private client: AxiosInstance;
   private baseUrl: string;
@@ -533,66 +573,32 @@ export class PingCodeClient {
   }
 
   /**
-   * 获取缺陷字段的选项列表（从工作项的 references 中提取）
+   * 获取缺陷选项字段的定义（原因分析 / 解决方案）
+   *
+   * 字段 key 因租户而异，这里返回真实 key，写入时直接用它。
    * @param workItemId 缺陷工作项的编号
    */
   async getBugFieldOptions(workItemId: string): Promise<{
-    reason: Array<{ id: string; text: string }>;
-    solution: Array<{ id: string; text: string }>;
+    reason: BugFieldDefinition | null;
+    solution: BugFieldDefinition | null;
   }> {
     const headers = this.getAuthHeaders();
     const cleanId = workItemId.replace(/^#/, '').trim();
 
     try {
       const response = await this.client.get(`/api/agile/work-items/${cleanId}`, { headers });
-      const refs = response.data?.data?.references || {};
-      const properties = refs.properties || [];
+      const properties: any[] = response.data?.data?.references?.properties || [];
 
-      const result = {
-        reason: [] as Array<{ id: string; text: string }>,
-        solution: [] as Array<{ id: string; text: string }>,
+      return {
+        reason: findBugField(properties, BUG_FIELD_MATCHERS.reason),
+        solution: findBugField(properties, BUG_FIELD_MATCHERS.solution),
       };
-
-      for (const prop of properties) {
-        if (prop.key === 'reason' && prop.options) {
-          result.reason = prop.options.map((opt: any) => ({
-            id: opt._id,
-            text: opt.text,
-          }));
-        }
-        if (prop.key === 'solution' && prop.options) {
-          result.solution = prop.options.map((opt: any) => ({
-            id: opt._id,
-            text: opt.text,
-          }));
-        }
-      }
-
-      return result;
     } catch (error: any) {
       if (error.response?.status === 401) {
         throw new Error('登录已过期，请重新调用 login 工具登录');
       }
       throw error;
     }
-  }
-
-  /**
-   * 获取"原因分析"字段的可选值列表
-   * @param workItemId 缺陷工作项的编号
-   */
-  async getReasonOptions(workItemId: string): Promise<Array<{ id: string; text: string }>> {
-    const options = await this.getBugFieldOptions(workItemId);
-    return options.reason;
-  }
-
-  /**
-   * 获取"解决方案"字段的可选值列表
-   * @param workItemId 缺陷工作项的编号
-   */
-  async getSolutionOptions(workItemId: string): Promise<Array<{ id: string; text: string }>> {
-    const options = await this.getBugFieldOptions(workItemId);
-    return options.solution;
   }
 
   /**
@@ -633,21 +639,17 @@ export class PingCodeClient {
   }
 
   /**
-   * 更新"原因分析"字段
+   * 更新缺陷的选项字段（原因分析 / 解决方案）
    * @param workItemId 工作项编号
-   * @param reasonId 原因分析选项 ID（可通过 getReasonOptions 获取）
+   * @param fieldKey 字段真实 key（由 getBugFieldOptions 返回）
+   * @param optionId 选项 ID
    */
-  async updateReason(workItemId: string, reasonId: string): Promise<boolean> {
-    return this.updateWorkItemProperties(workItemId, [{ key: 'reason', value: reasonId }]);
-  }
-
-  /**
-   * 更新"解决方案"字段
-   * @param workItemId 工作项编号
-   * @param solutionId 解决方案选项 ID（可通过 getSolutionOptions 获取）
-   */
-  async updateSolution(workItemId: string, solutionId: string): Promise<boolean> {
-    return this.updateWorkItemProperties(workItemId, [{ key: 'solution', value: solutionId }]);
+  async updateBugOptionField(
+    workItemId: string,
+    fieldKey: string,
+    optionId: string
+  ): Promise<boolean> {
+    return this.updateWorkItemProperties(workItemId, [{ key: fieldKey, value: optionId }]);
   }
 
   /**

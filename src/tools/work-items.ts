@@ -1,4 +1,5 @@
 import { pingcodeClient, PRIORITY_MAP } from '../api/pingcode-client.js';
+import type { BugFieldDefinition } from '../api/pingcode-client.js';
 import type { WorkItem } from '../types/pingcode.js';
 
 // 状态类型映射 (state_type)
@@ -847,33 +848,35 @@ export async function getBugFieldOptions(
 ): Promise<{
   success: boolean;
   data?: string;
-  reason?: Array<{ id: string; text: string }>;
-  solution?: Array<{ id: string; text: string }>;
+  reason?: BugFieldDefinition | null;
+  solution?: BugFieldDefinition | null;
   error?: string;
 }> {
   try {
     const options = await pingcodeClient.getBugFieldOptions(workItemId);
 
-    const lines: string[] = [
-      '# 缺陷字段选项列表',
-      '',
-      '## 原因分析选项',
-      '',
-    ];
+    const lines: string[] = ['# 缺陷字段选项列表', ''];
 
-    options.reason.forEach((opt, index) => {
-      lines.push(`${index + 1}. **${opt.text}** (ID: ${opt.id})`);
-    });
+    // 字段 key 因租户而异，展示真实 key 方便排查
+    for (const field of [options.reason, options.solution]) {
+      if (!field) continue;
+      lines.push(`## ${field.name} (key: ${field.key})`, '');
+      field.options.forEach((opt, index) => {
+        lines.push(`${index + 1}. **${opt.text}** (ID: ${opt.id})`);
+      });
+      lines.push('');
+    }
 
-    lines.push('', '## 解决方案选项', '');
-
-    options.solution.forEach((opt, index) => {
-      lines.push(`${index + 1}. **${opt.text}** (ID: ${opt.id})`);
-    });
+    if (lines.length === 2) {
+      return {
+        success: false,
+        error: `工作项 ${workItemId} 没有原因分析 / 解决方案字段，请确认它是缺陷单`,
+      };
+    }
 
     return {
       success: true,
-      data: lines.join('\n'),
+      data: lines.join('\n').trimEnd(),
       reason: options.reason,
       solution: options.solution,
     };
@@ -903,41 +906,53 @@ export async function updateBugFields(
   error?: string;
 }> {
   try {
-    // 获取选项列表用于文本到 ID 的映射
+    // 字段 key 因租户而异，先取字段定义，再按真实 key 写入
     const options = await pingcodeClient.getBugFieldOptions(workItemId);
     const updates: string[] = [];
 
     // 更新原因分析
     if (reason) {
-      // 检查是否是选项文本，如果是则转换为 ID
-      const reasonOpt = options.reason.find(
-        (opt) => opt.text === reason || opt.id === reason
-      );
-      if (reasonOpt) {
-        await pingcodeClient.updateReason(workItemId, reasonOpt.id);
-        updates.push(`原因分析: ${reasonOpt.text}`);
-      } else {
+      const field = options.reason;
+      if (!field) {
         return {
           success: false,
-          error: `无效的原因分析选项: "${reason}"。可用选项: ${options.reason.map((o) => o.text).join('、')}`,
+          error: `工作项 ${workItemId} 没有原因分析字段`,
         };
       }
+      // 检查是否是选项文本，如果是则转换为 ID
+      const reasonOpt = field.options.find(
+        (opt) => opt.text === reason || opt.id === reason
+      );
+      if (!reasonOpt) {
+        return {
+          success: false,
+          error: `无效的原因分析选项: "${reason}"。可用选项: ${field.options.map((o) => o.text).join('、')}`,
+        };
+      }
+      await pingcodeClient.updateBugOptionField(workItemId, field.key, reasonOpt.id);
+      updates.push(`${field.name}: ${reasonOpt.text}`);
     }
 
     // 更新解决方案
     if (solution) {
-      const solutionOpt = options.solution.find(
-        (opt) => opt.text === solution || opt.id === solution
-      );
-      if (solutionOpt) {
-        await pingcodeClient.updateSolution(workItemId, solutionOpt.id);
-        updates.push(`解决方案: ${solutionOpt.text}`);
-      } else {
+      const field = options.solution;
+      if (!field) {
         return {
           success: false,
-          error: `无效的解决方案选项: "${solution}"。可用选项: ${options.solution.map((o) => o.text).join('、')}`,
+          error: `工作项 ${workItemId} 没有解决方案字段`,
         };
       }
+      const solutionOpt = field.options.find(
+        (opt) => opt.text === solution || opt.id === solution
+      );
+      if (!solutionOpt) {
+        return {
+          success: false,
+          error: `无效的解决方案选项: "${solution}"。可用选项: ${field.options.map((o) => o.text).join('、')}`,
+        };
+      }
+      await pingcodeClient.updateBugOptionField(workItemId, field.key, solutionOpt.id);
+      updates.push(`${field.name}: ${solutionOpt.text}`);
     }
 
     // 更新解决方法（文本字段）

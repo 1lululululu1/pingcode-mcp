@@ -170,7 +170,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_bug_field_options',
-        description: '获取缺陷字段的可选值列表（原因分析、解决方案）及其 ID 映射。AI 根据修复内容判断选择哪个选项。',
+        description:
+          '获取缺陷字段的可选值列表（原因分析、解决方案）及其 ID 映射。' +
+          '字段 key 各租户不同，本工具按 key 或中文名自动识别并返回真实 key。' +
+          'AI 根据修复内容判断选择哪个选项。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -184,7 +187,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'update_bug_fields',
-        description: '更新缺陷的原因分析、解决方案、解决方法字段。支持使用选项文本或 ID。',
+        description:
+          '更新缺陷的原因分析、解决方案、解决方法字段。支持使用选项文本或 ID，' +
+          '内部会按租户的真实字段 key 写入。',
         inputSchema: {
           type: 'object',
           properties: {
